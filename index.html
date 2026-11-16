@@ -203,7 +203,6 @@
   .p3year { position: absolute; color: #fff; font-weight: 700; font-size: 30px; width: 130px; left: -65px; text-align: center; pointer-events: none;
     text-shadow: 0 1px 8px rgba(0,0,0,.25); }
   .scene .hint3d { position: absolute; left: 18px; bottom: 14px; font-size: 13px; color: var(--muted); pointer-events: none; }
-  .scene .replay { position: absolute; right: 14px; bottom: 12px; font-size: 13px; padding: 7px 14px; }
 
   /* Årskalender */
   .yblock + .yblock { margin-top: 14px; }
@@ -296,7 +295,7 @@
   }
   @media (max-width: 600px) {
     .scene { height: 440px; }
-    .scene .hint3d { max-width: calc(100% - 150px); font-size: 12px; line-height: 1.3; bottom: 12px; }
+    .scene .hint3d { right: 18px; font-size: 12px; line-height: 1.3; bottom: 12px; text-align: center; }
     .toast { bottom: calc(20px + env(safe-area-inset-bottom)); max-width: calc(100vw - 32px); }
   }
   @media (prefers-reduced-motion: reduce) {
@@ -304,7 +303,7 @@
   }
   @media print {
     body { background: #fff; }
-    .edit, .warn, .actions, .exit, header .lock, .seg, .hint3d, .replay, .toast { display: none !important; }
+    .edit, .warn, .actions, .exit, header .lock, .seg, .hint3d, .toast { display: none !important; }
     .card { box-shadow: none; border: 1px solid var(--line); break-inside: avoid; }
     * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
     body.v3d .scene { display: none !important; }
@@ -399,7 +398,6 @@
     <div class="scene" id="scene" style="display:none">
       <div class="stage" id="stage"></div>
       <div class="hint3d">Dra for å kikke rundt – slipp, så går den tilbake</div>
-      <button class="replay" onclick="build3d(true)">↻ Spill av igjen</button>
     </div>
   </div>
 
@@ -651,8 +649,9 @@ function render(o = {}) {
 function renderTrend(goal, animate) {
   const t = $('trend');
   const cols = [...t.querySelectorAll('.col')];
+  const tracks2 = [];
   if (animate || cols.length !== C.length) {
-    t.innerHTML = '';
+    stopTracks(t); t.innerHTML = '';
     C.forEach((c, i) => {
       const col = document.createElement('div');
       col.className = 'col';
@@ -663,11 +662,12 @@ function renderTrend(goal, animate) {
       col.onclick = e => (e.metaKey || e.shiftKey || e.ctrlKey) ? togglePick(i) : select(i);
       col.title = 'Klikk for å vise året · ⌘-klikk for å markere flere';
       t.appendChild(col);
-      if (animate && !REDUCE) {
-        const d = i * 120;
-        col.querySelector('.stack').animate([{ transform: 'scaleY(0)' }, { transform: 'scaleY(1)' }], { duration: 900, delay: d, easing: EASE, fill: 'backwards' });
-        col.querySelector('.lbl').animate([{ opacity: 0, transform: 'translateY(8px)' }, { opacity: 1, transform: 'none' }], { duration: 500, delay: d + 500, easing: EASE, fill: 'backwards' });
-        const b = col.querySelector('.lbl b'); b._v = 0; b.textContent = pct(0); b._delay = d + 500;
+      if (animate) {
+        const d = i * 120, stack = col.querySelector('.stack'), lbl = col.querySelector('.lbl');
+        stack.style.transformOrigin = 'bottom'; stack.style.transform = 'scaleY(0)'; lbl.style.opacity = 0;
+        tracks2.push({ at: d, dur: 900, ease: easeOut, fn: k => { stack.style.transform = k >= 1 ? '' : `scaleY(${k})`; } });
+        tracks2.push({ at: d + 500, dur: 500, ease: easeOut, fn: k => { lbl.style.opacity = k; lbl.style.transform = k >= 1 ? '' : `translateY(${8 * (1 - k)}px)`; } });
+        lbl.querySelector('b')._grow = d + 500;
       }
     });
   }
@@ -678,10 +678,13 @@ function renderTrend(goal, animate) {
     const [L, S] = col.querySelector('.stack').children;
     L.style.height = c.lPct + '%'; S.style.height = c.sPct + '%';
     const b = col.querySelector('.lbl b');
-    tween(b, c.aPct, pct, b._delay ? 700 : 500, b._delay || 0); b._delay = 0;
+    if (b._grow != null) { const to = c.aPct; b._v = to; b.textContent = pct(0);
+      tracks2.push({ at: b._grow, dur: 700, ease: easeOut, fn: k => { b.textContent = pct(to * k); } }); b._grow = null; }
+    else tween(b, c.aPct, pct, 500);
     col.querySelector('.lbl small').textContent = `kort ${nb(c.sPct)} · lang ${nb(c.lPct)}`;
     col.querySelector('.yr').textContent = isFinite(c.year) ? c.year : '';
   });
+  runTracks(t, tracks2);
   let g = t.querySelector('.goalline');
   if (goal !== null) {
     if (!g) { g = document.createElement('div'); g.className = 'goalline'; g.innerHTML = '<span></span>'; t.appendChild(g); }
@@ -730,8 +733,35 @@ function segGeom(c) {
   const hH = H * (1 - c.aPct / 100), hS = H * c.sPct / 100, hL = H * c.lPct / 100;
   return { here: [hH, 0], short: [hS, hH], long: [hL, hH + hS] };
 }
+// Vekst-animasjonene tegnes bilde for bilde (requestAnimationFrame) – virker likt på Mac og iPhone,
+// også når «Reduser bevegelse» er på (veksten er selve poenget med grafene).
+const easeOut = k => 1 - Math.pow(1 - k, 3);
+const easeSpring = k => { const c1 = 1.9, c3 = c1 + 1; return 1 + c3 * Math.pow(k - 1, 3) + c1 * Math.pow(k - 1, 2); };
+function runTracks(host, tracks) {
+  if (!tracks.length) return;
+  host._tracks = tracks; const t0 = performance.now();
+  const step = now => {
+    let busy = false;
+    for (const tr of tracks) {
+      if (tr.done) continue;
+      const k = (now - t0 - tr.at) / tr.dur;
+      if (k < 0) { busy = true; continue; }
+      if (k >= 1) { tr.fn(1); tr.done = true; continue; }
+      tr.fn(tr.ease(k)); busy = true;
+    }
+    host._raf = busy ? requestAnimationFrame(step) : 0;
+    if (!busy) host._tracks = null;
+  };
+  host._raf = requestAnimationFrame(step);
+}
+function stopTracks(host) {
+  cancelAnimationFrame(host._raf); host._raf = 0;
+  if (host._tracks) host._tracks.forEach(tr => { if (!tr.done) { tr.fn(1); tr.done = true; } });
+  host._tracks = null;
+}
 function build3d(animate) {
-  const st = $('stage'); st.innerHTML = ''; st._n = C.length;
+  const st = $('stage'); stopTracks(st); st.innerHTML = ''; st._n = C.length;
+  const tracks = [];
   const fl = document.createElement('div'); fl.className = 'floor'; st.appendChild(fl);
   const n = C.length;
   const css = getComputedStyle(document.documentElement);
@@ -763,25 +793,34 @@ function build3d(animate) {
     st.appendChild(p);
     update3dPillar(p, c, true);
 
-    if (animate && !REDUCE) {
+    if (animate) {
       const t0 = i * STAGGER, G = segGeom(c);
       let t = t0;
       els.forEach(el => {
         const [h, yb] = G[el.dataset.kind];
         if (h <= 0.3) return;
-        const fast = el.dataset.kind !== 'here';
-        el.animate([{ transform: segTf(0.01, yb), visibility: 'hidden' }, { transform: segTf(h, yb), visibility: 'visible' }],
-          { duration: fast ? 650 : 1000, delay: t, easing: fast ? SPRING : EASE, fill: 'backwards' });
+        const fast = el.dataset.kind !== 'here', d = fast ? 650 : 1000;
+        el.style.visibility = 'hidden'; el.style.transform = segTf(0.01, yb);
+        tracks.push({ at: t, dur: d, ease: fast ? easeSpring : easeOut, fn: k => {
+          el.style.visibility = 'visible';
+          el.style.transform = segTf(Math.max(0.01, h * k), yb);
+        }});
         t += fast ? 420 : 850;
       });
-      sh.animate([{ opacity: 0, transform: 'translateY(-0.5px) rotateX(90deg) scale(.4)' }, { opacity: 1, transform: 'translateY(-0.5px) rotateX(90deg) scale(1)' }], { duration: 900, delay: t0, easing: EASE, fill: 'backwards' });
-      yr.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 500, delay: t0 + 450, fill: 'backwards' });
+      sh.style.opacity = 0;
+      tracks.push({ at: t0, dur: 900, ease: easeOut, fn: k => { sh.style.opacity = k; sh.style.transform = `translateY(-0.5px) rotateX(90deg) scale(${.4 + .6 * k})`; } });
+      yr.style.opacity = 0;
+      tracks.push({ at: t0 + 450, dur: 500, ease: easeOut, fn: k => { yr.style.opacity = k; } });
       const redStart = t0 + 850;
-      if (c.away > 0) glow.animate([{ opacity: 0 }, { opacity: 1, offset: .35 }, { opacity: 0 }], { duration: 1300, delay: redStart + 150, easing: 'ease-out' });
-      lb.firstChild.animate([{ opacity: 0, transform: 'translateY(14px) scale(.9)' }, { opacity: 1, transform: 'none' }], { duration: 600, delay: redStart, easing: SPRING, fill: 'backwards' });
-      const b = lb.querySelector('b'); b._v = 0; b.textContent = pct(0); tween(b, c.aPct, pct, 900, redStart);
+      if (c.away > 0) tracks.push({ at: redStart + 150, dur: 1300, ease: k => k, fn: k => { glow.style.opacity = k >= 1 ? 0 : k < .35 ? k / .35 : 1 - (k - .35) / .65; } });
+      const inn = lb.firstChild; inn.style.opacity = 0;
+      tracks.push({ at: redStart, dur: 600, ease: easeSpring, fn: k => { inn.style.opacity = Math.min(1, k * 1.4); inn.style.transform = k >= 1 ? '' : `translateY(${14 * (1 - k)}px) scale(${.9 + .1 * k})`; } });
+      const b = lb.querySelector('b'), to = c.aPct;
+      b._v = to; b.textContent = pct(0);
+      tracks.push({ at: redStart, dur: 900, ease: easeOut, fn: k => { b.textContent = pct(to * k); } });
     }
   });
+  runTracks(st, tracks);
   applyCam();
 }
 // Oppdater søylene på plass: de glir til ny høyde mens du skriver
@@ -801,6 +840,7 @@ function update3dPillar(p, c, instant) {
 function update3d() {
   const st = $('stage');
   if (st._n !== C.length) return build3d(true);
+  stopTracks(st);
   st.querySelectorAll('.pillar').forEach((p, i) => update3dPillar(p, C[i], false));
 }
 function applyCam() {
