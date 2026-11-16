@@ -1,0 +1,1223 @@
+<!DOCTYPE html>
+<html lang="nb">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- Ingen nettverkstilgang: siden får ikke laste noe utenfra og sender ingenting. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data: blob: 'self'; manifest-src 'self'; worker-src 'self'; connect-src 'self';">
+<title>Fraværskalkulator</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-180.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Fravær">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="theme-color" content="#F6F8F7">
+<style>
+  :root {
+    --bg: #F6F8F7;
+    --ink: #1D1B18;
+    --muted: #6B7175;
+    --card: #FFFFFF;
+    --line: #E2E6E8;
+    --here: #2F5D50;   --here-rgb: 47,93,80;
+    --here-soft: #DCE7E2;
+    --pillar: #2F6FD6; --pillar-rgb: 47,111,214;  /* blå søyler i 3D */
+    --short: #C8402F;  --short-rgb: 200,64,47;
+    --long: #7E1F2E;   --long-rgb: 126,31,46;
+
+    --ease: cubic-bezier(.22, 1, .36, 1);
+    --spring: cubic-bezier(.34, 1.45, .64, 1);
+    --d-1: 150ms; --d-2: 220ms; --d-3: 320ms;
+    --shadow: 0 1px 2px rgba(29,27,24,.04), 0 8px 30px -12px rgba(29,27,24,.12);
+  }
+  * { box-sizing: border-box; }
+  html { background: var(--bg); }
+  body { min-height: 100vh;
+    background:
+      radial-gradient(70% 60% at 0% 0%, #CBEADB 0%, rgba(203,234,219,0) 72%),
+      radial-gradient(65% 60% at 100% 0%, #D3E1FA 0%, rgba(211,225,250,0) 72%),
+      radial-gradient(70% 60% at 90% 100%, #F6D8E3 0%, rgba(246,216,227,0) 72%),
+      radial-gradient(65% 60% at 0% 100%, #E2DBF7 0%, rgba(226,219,247,0) 72%),
+      var(--bg);
+    background-attachment: fixed; }
+  html, body { margin: 0; color: var(--ink);
+    font-family: "Avenir Next", "Avenir", -apple-system, sans-serif; -webkit-font-smoothing: antialiased; }
+  ::selection { background: rgba(var(--here-rgb), .18); }
+  .wrap { max-width: 1140px; margin: 0 auto; padding: 36px 28px 70px; }
+  header { display: flex; justify-content: space-between; align-items: baseline; gap: 16px; flex-wrap: wrap; }
+  h1 { font-size: 32px; font-weight: 700; letter-spacing: -0.03em; margin: 0; }
+  h2 { font-size: 20px; margin: 0; letter-spacing: -0.015em; }
+  .lock { color: var(--muted); font-size: 13px; }
+
+  /* Inngang: kortene glir opp etter hverandre */
+  @keyframes rise { from { opacity: 0; transform: translateY(14px) scale(.99); } to { opacity: 1; transform: none; } }
+  .enter { animation: rise .7s var(--ease) both; }
+  .enter:nth-child(2) { animation-delay: .05s; } .enter:nth-child(3) { animation-delay: .1s; }
+  .enter:nth-child(4) { animation-delay: .16s; } .enter:nth-child(5) { animation-delay: .22s; }
+  .enter:nth-child(6) { animation-delay: .28s; } .enter:nth-child(7) { animation-delay: .34s; }
+
+  label, .th { display: block; font-size: 11.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); margin-bottom: 6px; }
+  input { width: 100%; font: inherit; font-size: 19px; font-weight: 600; padding: 10px 12px; border: 1.5px solid var(--line);
+    border-radius: 12px; background: var(--card); color: var(--ink); outline: none;
+    transition: border-color var(--d-1) var(--ease), box-shadow var(--d-2) var(--ease), transform var(--d-2) var(--spring), background-color var(--d-1) var(--ease); }
+  input:hover { border-color: #CBD1D5; }
+  input:focus { border-color: var(--ink); box-shadow: 0 0 0 4px rgba(29,27,24,.07); transform: scale(1.015); }
+  input::-webkit-outer-spin-button, input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+  input[type=number] { -moz-appearance: textfield; }
+  .top { position: relative; z-index: 6; display: grid; grid-template-columns: 1.6fr 0.7fr 0.8fr auto; gap: 14px; margin: 26px 0 14px; align-items: end; }
+
+  /* Personvelger */
+  .person { position: relative; }
+  .ptrigger { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 10px; text-align: left;
+    font-size: 19px; font-weight: 700; padding: 10px 14px; border-radius: 12px; border: 1.5px solid var(--line); background: var(--card); }
+  .ptrigger:hover { transform: scale(1.015); }
+  .ptrigger svg { flex: none; transition: transform var(--d-3) var(--spring); }
+  .person.open .ptrigger { border-color: var(--ink); box-shadow: 0 0 0 4px rgba(29,27,24,.07); }
+  .person.open .ptrigger svg { transform: rotate(180deg); }
+  .pmenu { position: absolute; z-index: 20; left: 0; right: 0; top: calc(100% + 8px); background: rgba(255,255,255,.96);
+    backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+    border-radius: 16px; box-shadow: 0 0 0 1px rgba(29,27,24,.06), 0 24px 50px -18px rgba(29,27,24,.35); padding: 6px;
+    transform-origin: top center; transform: translateY(-6px) scale(.97); opacity: 0; pointer-events: none;
+    transition: transform .35s var(--spring), opacity .18s var(--ease); }
+  .person.open .pmenu { transform: none; opacity: 1; pointer-events: auto; }
+  .plist { max-height: 300px; overflow-y: auto; }
+  .pitem { display: flex; justify-content: space-between; align-items: center; width: 100%; border: 0; border-radius: 10px; background: none;
+    text-align: left; font-size: 16px; font-weight: 600; padding: 10px 12px; box-shadow: none; }
+  .pitem:hover { background: rgba(29,27,24,.05); transform: none; box-shadow: none; }
+  .pitem:active { transform: scale(.98); }
+  .pitem.cur { color: var(--here); }
+  .pitem.cur::after { content: '✓'; font-weight: 700; }
+  .pfoot { display: flex; gap: 6px; border-top: 1px solid var(--line); margin-top: 6px; padding-top: 6px; flex-wrap: wrap; }
+  .pfoot button { font-size: 13px; padding: 7px 12px; }
+  .pfoot .danger:hover { color: var(--short); border-color: rgba(var(--short-rgb), .4); }
+  .pform { display: none; gap: 6px; padding: 6px; }
+  .pform.on { display: flex; }
+  .pform input { font-size: 16px; padding: 8px 10px; }
+  .pform input:focus { transform: none; }
+  .pform button { font-size: 13px; padding: 7px 14px; white-space: nowrap; }
+
+  /* Lagre-knapp med prikk når noe ikke er lagret */
+  .savebtn { position: relative; height: 47px; padding: 0 22px; }
+  .savebtn::after { content: ''; position: absolute; top: 6px; right: 6px; width: 9px; height: 9px; border-radius: 50%;
+    background: var(--short); transform: scale(0); transition: transform .4s var(--spring); }
+  .savebtn.dirty::after { transform: scale(1); }
+
+  /* Årstabell */
+  .years { background: var(--card); border-radius: 22px; padding: 16px 20px 16px; box-shadow: var(--shadow); }
+  .row { display: grid; grid-template-columns: 34px 0.75fr 0.8fr 0.95fr 1fr 1fr 0.8fr 36px; gap: 10px; align-items: center; padding: 5px 0; }
+  .row.head { padding: 0; align-items: end; }
+  #rows .row { border-radius: 14px; }
+  .group { grid-column: 5 / span 2; text-align: center; font-size: 12px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase;
+    color: var(--short); border-bottom: 2px solid rgba(var(--short-rgb), .3); padding: 4px 0 6px; margin-bottom: 4px; }
+  .th small { display: block; text-transform: none; letter-spacing: 0; font-weight: 500; font-size: 12px; opacity: .8; margin-top: 1px; }
+  .row .pick { width: 22px; height: 22px; border-radius: 50%; border: 2px solid var(--line); cursor: pointer; justify-self: center;
+    transition: transform var(--d-2) var(--spring), border-color var(--d-1) var(--ease), background var(--d-2) var(--ease); }
+  .row .pick:hover { transform: scale(1.15); border-color: var(--muted); }
+  .row .pick:active { transform: scale(.9); transition-duration: 80ms; }
+  .row.sel .pick { border-color: var(--here); background: radial-gradient(var(--here) 45%, transparent 50%); }
+  .row .pct { font-size: 19px; font-weight: 700; text-align: right; color: var(--short); font-variant-numeric: tabular-nums; }
+  .row input.s, .row input.l { background: rgba(var(--short-rgb), .035); border-color: rgba(var(--short-rgb), .2); }
+  .row input.l { background: rgba(var(--long-rgb), .035); border-color: rgba(var(--long-rgb), .2); }
+  .row input.s:focus, .row input.l:focus { border-color: var(--short); box-shadow: 0 0 0 4px rgba(var(--short-rgb), .1); }
+  .row .del { border: 0; background: none; font-size: 20px; color: var(--muted); cursor: pointer; padding: 0; width: 30px; height: 30px; border-radius: 50%; }
+  .row .del:hover { color: var(--short); background: rgba(var(--short-rgb), .08); transform: scale(1.1); box-shadow: none; }
+  .hint { font-size: 13px; color: var(--muted); margin-top: 10px; line-height: 1.45; }
+  .warn { color: var(--short); font-size: 14px; min-height: 18px; margin-top: 4px; }
+
+  .card { background: var(--card); border-radius: 24px; padding: 30px; margin-top: 18px; box-shadow: var(--shadow); }
+  .who { font-size: 15px; color: var(--muted); margin-bottom: 4px; min-height: 20px; }
+
+  .hero { display: grid; grid-template-columns: 1fr 1fr; gap: 28px; }
+  .big { font-size: 88px; font-weight: 700; letter-spacing: -0.045em; line-height: 1; font-variant-numeric: tabular-nums; }
+  .big.away { color: var(--short); }
+  .big.here { color: var(--here); }
+  .cap { font-size: 16px; margin-top: 10px; color: var(--muted); }
+  .cap b { color: var(--ink); }
+  .split { display: flex; gap: 22px; margin-top: 14px; font-size: 16px; flex-wrap: wrap; }
+  .split b { font-size: 22px; font-variant-numeric: tabular-nums; }
+  .sw { display: inline-block; width: 14px; height: 14px; border-radius: 4px; vertical-align: -2px; margin-right: 6px; transition: background var(--d-3) var(--ease); }
+  .change { margin-top: 16px; font-size: 16px; font-weight: 600; transition: color var(--d-3) var(--ease); }
+  .change.up { color: var(--short); } .change.down { color: var(--here); } .change.flat { color: var(--muted); }
+
+  .bar { position: relative; height: 60px; border-radius: 16px; overflow: hidden; margin-top: 28px; display: flex; background: var(--here-soft); }
+  .bar div { height: 100%; transition: width .9s var(--ease); }
+  .bar .goal { position: absolute; top: 0; bottom: 0; width: 3px; background: var(--ink); display: none; transition: left .6s var(--ease); }
+  .goaltag { position: relative; height: 22px; font-size: 13px; font-weight: 600; margin-top: 4px; }
+  .goaltag span { position: absolute; transform: translateX(-50%); white-space: nowrap; transition: left .6s var(--ease), color var(--d-3); }
+
+  .cardhead { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; }
+  .legend { font-size: 14px; color: var(--muted); display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
+
+  /* Knapper: vokser litt ved hover, synker inn ved trykk */
+  button { font: inherit; font-size: 15px; font-weight: 600; padding: 11px 19px; border-radius: 999px; border: 1.5px solid var(--line);
+    background: var(--card); color: var(--ink); cursor: pointer; -webkit-tap-highlight-color: transparent;
+    transition: transform var(--d-2) var(--spring), box-shadow var(--d-2) var(--ease), background-color var(--d-1) var(--ease),
+      border-color var(--d-1) var(--ease), color var(--d-1) var(--ease), opacity var(--d-1) var(--ease); }
+  button:hover { transform: translateY(-1px) scale(1.035); border-color: #C7CDD2; box-shadow: 0 8px 20px -10px rgba(29,27,24,.35); }
+  button:active { transform: scale(.96); opacity: .82; box-shadow: none; transition-duration: 80ms; }
+  button.primary { background: var(--ink); border-color: var(--ink); color: #fff; }
+  button.primary:hover { background: #2E2B26; box-shadow: 0 10px 24px -10px rgba(29,27,24,.6); }
+  button:focus-visible { outline: none; box-shadow: 0 0 0 4px rgba(29,27,24,.12); }
+  .addyear { margin-top: 10px; font-size: 14px; padding: 8px 15px; }
+
+  /* Segmentert 2D/3D med glidende pille */
+  .seg { position: relative; display: inline-flex; background: #EEF1F2; border-radius: 999px; padding: 4px; }
+  .seg .pill { position: absolute; top: 4px; bottom: 4px; left: 0; border-radius: 999px; background: var(--ink);
+    box-shadow: 0 4px 12px -4px rgba(29,27,24,.5); transition: transform .45s var(--spring), width .45s var(--spring); }
+  .seg button { position: relative; z-index: 1; border: 0; background: none; padding: 7px 18px; font-size: 14px; color: var(--muted); box-shadow: none; }
+  .seg button:hover { transform: scale(1.06); box-shadow: none; color: var(--ink); }
+  .seg button:active { transform: scale(.94); }
+  .seg button.on, .seg button.on:hover { color: #fff; }
+
+  /* 2D trend */
+  .trend { position: relative; display: flex; justify-content: center; align-items: flex-end; gap: clamp(16px, 5vw, 60px); height: 390px; margin-top: 18px; padding-top: 70px; }
+  .col { display: flex; flex-direction: column; align-items: center; width: 96px; cursor: pointer; }
+  .col .lbl { text-align: center; margin-bottom: 8px; width: 150px; }
+  .col .lbl b { display: block; font-size: 27px; color: var(--short); letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+  .col .lbl small { color: var(--muted); font-size: 12px; white-space: nowrap; }
+  .col .stack { width: 100%; height: 260px; display: flex; flex-direction: column; border-radius: 12px 12px 5px 5px; overflow: hidden;
+    transform-origin: bottom; transition: transform var(--d-3) var(--spring), box-shadow var(--d-3) var(--ease); }
+  .col:hover .stack { transform: scaleX(1.05); box-shadow: 0 16px 30px -18px rgba(29,27,24,.45); }
+  .col .stack div { transition: height .7s var(--ease); }
+  .col .yr { margin-top: 10px; font-weight: 700; font-size: 17px; transition: color var(--d-2); }
+  .col.sel .yr { color: var(--here); }
+  .col.sel .stack { outline: 3px solid var(--ink); outline-offset: 3px; }
+  .trend .goalline { position: absolute; left: 0; right: 0; border-top: 2px dashed var(--ink); display: none; }
+  .trend .goalline span { position: absolute; right: 0; top: -22px; font-size: 13px; font-weight: 600; }
+
+  /* 3D */
+  .scene { position: relative; height: 640px; margin-top: 12px; perspective: 1800px; perspective-origin: 50% 35%;
+    cursor: grab; touch-action: none; user-select: none; overflow: hidden;
+    background: radial-gradient(ellipse at 50% 80%, #fff 0%, #F5F7F8 50%, #E9EDF0 100%); border-radius: 18px; }
+  .scene:active { cursor: grabbing; }
+  .stage { position: absolute; left: 50%; transform-style: preserve-3d; }
+  .stage * { transform-style: preserve-3d; }
+  .floor { position: absolute; width: 1600px; height: 1000px; left: -800px; top: -500px; transform: rotateX(90deg);
+    background: radial-gradient(ellipse at center, rgba(29,27,24,.08) 0%, rgba(29,27,24,0) 60%); }
+  .pillar { position: absolute; left: 0; top: 0; }
+  .face { position: absolute; backface-visibility: visible; box-shadow: inset 0 0 0 1px rgba(255,255,255,.5); }
+  .p3label { position: absolute; width: 220px; left: -110px; text-align: center; pointer-events: none; }
+  .p3label b { display: block; font-size: 40px; color: var(--short); letter-spacing: -0.03em; text-shadow: 0 2px 14px #fff; font-variant-numeric: tabular-nums; }
+  .p3label small { color: var(--muted); font-size: 14px; font-weight: 600; }
+  .p3year { position: absolute; color: #fff; font-weight: 700; font-size: 30px; width: 130px; left: -65px; text-align: center; pointer-events: none;
+    text-shadow: 0 1px 8px rgba(0,0,0,.25); }
+  .scene .hint3d { position: absolute; left: 18px; bottom: 14px; font-size: 13px; color: var(--muted); pointer-events: none; }
+  .scene .replay { position: absolute; right: 14px; bottom: 12px; font-size: 13px; padding: 7px 14px; }
+
+  /* Årskalender */
+  .yblock + .yblock { margin-top: 14px; }
+  .ylabel { font-size: 14px; font-weight: 700; margin: 16px 0 -12px; display: flex; gap: 10px; align-items: baseline; }
+  .ylabel span { color: var(--short); font-weight: 600; }
+  .grid { display: grid; grid-auto-flow: column; grid-template-rows: repeat(5, 1fr); gap: 4px; margin-top: 20px; }
+  .day { aspect-ratio: 1; border-radius: 4px; background: var(--here-soft); position: relative; overflow: hidden; transition: transform var(--d-2) var(--spring); }
+  .day:hover { transform: scale(1.35); z-index: 1; }
+  .day i { position: absolute; left: 0; right: 0; bottom: 0; transition: height .45s var(--ease), bottom .45s var(--ease); }
+  .days-note { font-size: 14px; margin-top: 14px; color: var(--muted); }
+  .tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-top: 12px; }
+  .tile { border-radius: 18px; padding: 18px 20px; transition: transform var(--d-2) var(--spring), box-shadow var(--d-2) var(--ease); }
+  .tile:hover { transform: translateY(-2px) scale(1.02); box-shadow: 0 12px 26px -16px rgba(29,27,24,.35); }
+  .tile b { display: block; font-size: 30px; letter-spacing: -0.03em; line-height: 1.1; font-variant-numeric: tabular-nums; }
+  .tile span { display: block; font-size: 14px; font-weight: 600; margin-top: 6px; opacity: .85; }
+  .tile.s { background: rgba(var(--short-rgb), .11); color: var(--short); }
+  .tile.l { background: rgba(var(--long-rgb), .11); color: var(--long); }
+  .tile.t { background: rgba(29,27,24,.06); color: var(--ink); }
+  .tile.e { background: var(--here-soft); color: var(--here); }
+  .eff { margin-top: 14px; display: inline-block; background: var(--here-soft); color: var(--here); font-size: 16px; font-weight: 600; padding: 8px 14px; border-radius: 12px; }
+  .eff b { font-size: 20px; }
+  select { appearance: none; -webkit-appearance: none; width: 100%; font: inherit; font-size: 19px; font-weight: 600; padding: 10px 30px 10px 12px;
+    border: 1.5px solid var(--line); border-radius: 12px; color: var(--ink); cursor: pointer; outline: none;
+    background: var(--card) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%236B7175' stroke-width='2' fill='none' stroke-linecap='round'/%3E%3C/svg%3E") no-repeat right 11px center;
+    transition: border-color var(--d-1) var(--ease), box-shadow var(--d-2) var(--ease), transform var(--d-2) var(--spring); }
+  select:hover { border-color: #CBD1D5; transform: scale(1.02); }
+  select:focus { border-color: var(--ink); box-shadow: 0 0 0 4px rgba(29,27,24,.07); }
+
+  .actions { display: flex; gap: 10px; margin-top: 24px; flex-wrap: wrap; }
+
+  /* Toast */
+  .toast { position: fixed; left: 50%; bottom: 28px; transform: translate(-50%, 30px) scale(.96); opacity: 0; pointer-events: none;
+    background: var(--ink); color: #fff; font-weight: 600; font-size: 15px; padding: 12px 20px; border-radius: 999px;
+    box-shadow: 0 16px 40px -14px rgba(0,0,0,.5); transition: transform .5s var(--spring), opacity .25s var(--ease); z-index: 10; }
+  .toast.on { opacity: 1; transform: translate(-50%, 0) scale(1); }
+
+  body.show .edit, body.show .warn, body.show .actions, body.show header .lock { display: none !important; }
+  body.show .wrap { max-width: 1300px; padding-top: 52px; }
+  body.show .big { font-size: 116px; }
+  .exit { display: none; position: fixed; right: 20px; top: 16px; z-index: 5; }
+  body.show .exit { display: block; }
+
+  @media (max-width: 860px) {
+    .tiles { grid-template-columns: 1fr 1fr; }
+    .row select { font-size: 16px; padding: 8px 24px 8px 8px; }
+    .top { grid-template-columns: 1fr 1fr; }
+    .person { grid-column: 1 / -1; }
+    .hero { grid-template-columns: 1fr; }
+    .big { font-size: 64px; }
+    .row { grid-template-columns: 24px 0.8fr 0.8fr 0.9fr 1fr 1fr 0.7fr 28px; gap: 6px; }
+    .row input { font-size: 16px; padding: 8px; }
+  }
+  .ml { display: none; }
+  /* Telefon: hvert år blir et lite kort */
+  @media (max-width: 600px) {
+    .wrap { padding: 22px 14px 50px; }
+    .years { padding: 12px; }
+    .row.head { display: none; }
+    #rows .row { grid-template-columns: 26px 1fr 1fr 1fr 30px; gap: 6px 8px; padding: 10px 8px 12px;
+      grid-template-areas: "pick year stil pct del" ". mlt mls mll ." ". tot sh lo ."; background: rgba(0,0,0,.022); margin-bottom: 8px; }
+    #rows .row .pick { grid-area: pick; }
+    #rows .row [data-k=year] { grid-area: year; font-weight: 700; }
+    #rows .row select { grid-area: stil; }
+    #rows .row .pct { grid-area: pct; font-size: 22px; }
+    #rows .row .del { grid-area: del; }
+    #rows .row [data-k=total] { grid-area: tot; }
+    #rows .row [data-k=short] { grid-area: sh; }
+    #rows .row [data-k=long] { grid-area: lo; }
+    .ml { display: block; font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin: 4px 0 -2px; }
+    .ml-t { grid-area: mlt; } .ml-s { grid-area: mls; color: var(--short); } .ml-l { grid-area: mll; color: var(--long); }
+    .row input, .row select { min-width: 0; width: 100%; }
+    #rows .row select { padding: 8px 20px 8px 8px; background-position: right 4px center; }
+    .tiles { grid-template-columns: 1fr 1fr; gap: 10px; }
+    .big { font-size: 56px; }
+    .actions .btn, .actions button { flex: 1 1 auto; }
+  }
+  /* Berøringsskjerm (iPhone/iPad): ingen «klebrig» hover, tydelig trykk som synker og fjærer tilbake */
+  html { -webkit-tap-highlight-color: transparent; -webkit-text-size-adjust: 100%; }
+  button, select, .pick, .tile, .col, .ptrigger { touch-action: manipulation; }
+  .scene { touch-action: pan-y; -webkit-user-select: none; user-select: none; }
+  @media (hover: none) {
+    button:hover, select:hover, input:hover, .ptrigger:hover, .row .pick:hover, .row .del:hover, .seg button:hover,
+    .col:hover .stack, .day:hover, .tile:hover { transform: none; box-shadow: none; }
+    button.primary:hover { background: var(--ink); }
+    .tile:active { transform: scale(.97); transition-duration: 90ms; }
+    .col:active .stack { transform: scaleX(1.05); }
+    .row .pick:active { transform: scale(.85); }
+    .ptrigger:active { transform: scale(.985); }
+    .day:active { transform: scale(1.35); }
+  }
+  @media (max-width: 600px) {
+    .scene { height: 440px; }
+    .scene .hint3d { max-width: calc(100% - 150px); font-size: 12px; line-height: 1.3; bottom: 12px; }
+    .toast { bottom: calc(20px + env(safe-area-inset-bottom)); max-width: calc(100vw - 32px); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: 1ms !important; transition-duration: 1ms !important; }
+  }
+  @media print {
+    body { background: #fff; }
+    .edit, .warn, .actions, .exit, header .lock, .seg, .hint3d, .replay, .toast { display: none !important; }
+    .card { box-shadow: none; border: 1px solid var(--line); break-inside: avoid; }
+    * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    body.v3d .scene { display: none !important; }
+    body.v3d .print3d { display: block !important; }
+    .enter { animation: none !important; }
+    .big { font-size: 58px !important; white-space: nowrap; }
+    .cap, .split, .change { font-size: 13px; } .split b { font-size: 17px; }
+    .eff { font-size: 13px; padding: 6px 10px; } .eff b { font-size: 15px; }
+    .card { padding: 20px; }
+    .tiles { gap: 8px; } .tile { padding: 12px 12px; border-radius: 14px; }
+    .tile b { font-size: 19px; white-space: nowrap; } .tile span { font-size: 11px; }
+    .who { font-size: 18px; font-weight: 700; color: var(--ink); }
+  }
+  .print3d { display: none; width: 100%; height: auto; margin-top: 12px; border-radius: 18px; }
+</style>
+</head>
+<body>
+<button class="exit" onclick="toggleShow()">Tilbake (Esc)</button>
+<div class="toast" id="toast"></div>
+<div class="wrap" id="wrap">
+  <header class="enter">
+    <h1>Fraværskalkulator</h1>
+    <div class="lock">Lagres bare på denne telefonen. Ingenting sendes. Lagres bare hvis du trykker «Lagre».</div>
+  </header>
+
+  <div class="top edit enter">
+    <div class="person" id="person">
+      <label>Person</label>
+      <button class="ptrigger" id="ptrigger" aria-haspopup="listbox"><span id="pname"></span>
+        <svg width="12" height="8" viewBox="0 0 12 8"><path d="M1 1l5 5 5-5" stroke="#6B7175" stroke-width="2" fill="none" stroke-linecap="round"/></svg></button>
+      <div class="pmenu" id="pmenu">
+        <div class="plist" id="plist" role="listbox"></div>
+        <div class="pform" id="pform"><input id="pinput" type="text" placeholder="Navn eller initialer" autocomplete="off"><button class="primary" id="pok">OK</button></div>
+        <div class="pfoot"><button id="pnew">+ Ny person</button><button id="pren">Endre navn</button><button id="pdel" class="danger">Slett</button></div>
+      </div>
+    </div>
+    <div><label for="hpd">Timer per dag</label><input id="hpd" type="number" min="1" step="0.5" value="7.5"></div>
+    <div><label for="goal">Grense % (valgfritt)</label><input id="goal" type="number" min="0" max="100" step="0.5" placeholder="–"></div>
+    <button class="primary savebtn" id="savebtn" onclick="saveAll()" title="Lagre (⌘S)">Lagre</button>
+  </div>
+
+  <div class="years edit enter">
+    <div class="row head"><span></span><span></span><span></span><span></span><span class="group">Fravær · timer</span></div>
+    <div class="row head">
+      <span></span><span class="th">År</span><span class="th">Stilling<small>i prosent</small></span><span class="th">Arbeidstimer<small>per år</small></span>
+      <span class="th" style="color:var(--short)">Korttid<small>1–16 dager</small></span>
+      <span class="th" style="color:var(--long)">Langtid<small>over 16 dager</small></span>
+      <span class="th" style="text-align:right">Fravær<small>i prosent</small></span><span></span>
+    </div>
+    <div id="rows"></div>
+    <button class="addyear" onclick="addYear()">+ Legg til år</button> <button class="addyear" onclick="pickAll()">Marker alle år</button>
+    <div class="hint">Velg stilling – arbeidstimene regnes ut av seg selv (100 % = 1695 timer). Skriv fraværet i timer. <b>Korttid</b> = sykefravær på 1–16 dager om gangen (arbeidsgiverperioden). <b>Langtid</b> = sykefravær over 16 dager. Årene sorteres av seg selv når du skriver et årstall. Trykk på rundingene for å markere år – du kan markere flere, så vises de samlet.</div>
+  </div>
+  <div class="warn" id="warn"></div>
+
+  <!-- Valgt år -->
+  <div class="card enter">
+    <div class="who" id="who"></div>
+    <div class="hero">
+      <div>
+        <div class="big away" id="awayPct">0 %</div>
+        <div class="cap">fravær i <b id="selYear"></b> · <b id="awayH">0 timer</b> · <b id="awayD">0 dager</b></div>
+        <div class="split">
+          <span><span class="sw" style="background:var(--short)"></span>Korttid <b id="shortPct">0 %</b> <span id="shortH" style="color:var(--muted)"></span></span>
+          <span><span class="sw" style="background:var(--long)"></span>Langtid <b id="longPct">0 %</b> <span id="longH" style="color:var(--muted)"></span></span>
+        </div>
+      </div>
+      <div>
+        <div class="big here" id="herePct">100 %</div>
+        <div class="cap">på jobb · <b id="hereH"></b> av <span id="totalH"></span></div>
+        <div class="eff" id="eff"></div>
+        <div class="change" id="change"></div>
+      </div>
+    </div>
+    <div class="bar"><div id="barH" style="background:var(--here);width:100%"></div><div id="barS" style="background:var(--short);width:0"></div><div id="barL" style="background:var(--long);width:0"></div><div class="goal" id="goalLine"></div></div>
+    <div class="goaltag"><span id="goalTag"></span></div>
+  </div>
+
+  <!-- Utvikling over år -->
+  <div class="card enter">
+    <div class="cardhead">
+      <h2>Utvikling år for år</h2>
+      <div class="legend">
+        <span><span class="sw" id="hereSw" style="background:var(--here)"></span>På jobb</span>
+        <span><span class="sw" style="background:var(--short)"></span>Korttid</span>
+        <span><span class="sw" style="background:var(--long)"></span>Langtid</span>
+        <span class="seg" id="seg"><i class="pill" id="pill"></i><button id="b2d" class="on" onclick="setView('2d')">2D</button><button id="b3d" onclick="setView('3d')">3D</button></span>
+      </div>
+    </div>
+    <div class="trend" id="trend"></div>
+    <img class="print3d" id="print3d" alt="">
+    <div class="scene" id="scene" style="display:none">
+      <div class="stage" id="stage"></div>
+      <div class="hint3d">Dra for å kikke rundt – slipp, så går den tilbake</div>
+      <button class="replay" onclick="build3d(true)">↻ Spill av igjen</button>
+    </div>
+  </div>
+
+  <!-- Årskalender -->
+  <div class="card enter">
+    <div class="cardhead">
+      <h2 id="gridTitle">Ett arbeidsår, dag for dag</h2>
+      <div class="legend">
+        <span><span class="sw" style="background:var(--here-soft)"></span>På jobb</span>
+        <span><span class="sw" style="background:var(--short)"></span>Korttid</span>
+        <span><span class="sw" style="background:var(--long)"></span>Langtid</span>
+      </div>
+    </div>
+    <div id="grids"></div>
+    <div class="days-note" id="daysNote"></div>
+    <div class="tiles" id="tiles"></div>
+  </div>
+
+  <div class="actions enter">
+    <button class="primary" onclick="toggleShow()">Vis for ansatt (fullskjerm)</button>
+    <button onclick="printDoc()">Skriv ut / lagre PDF</button>
+    <button onclick="exportFile()" title="Lagrer alle personer som en fil (backup)">Sikkerhetskopi</button>
+    <button onclick="document.getElementById('file').click()">Åpne fil</button>
+    <button onclick="clearAll()">Tøm</button>
+    <button class="instlink" onclick="instOpen()">Slik installerer du</button>
+    <input type="file" id="file" accept=".json,application/json" style="display:none">
+  </div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const nb = (n, d = 1) => n.toLocaleString('nb-NO', { minimumFractionDigits: 0, maximumFractionDigits: d });
+const num = v => { const x = parseFloat(String(v).replace(',', '.')); return isFinite(x) ? x : NaN; };
+const thisYear = new Date().getFullYear();
+const FULL = 1695;   // timer i 100 % stilling
+const STILLINGER = [100, 90, 80, 75, 70, 60, 50, 40, 30, 20, 10];
+const posOf = y => { const t = num(y.total); return t > 0 ? Math.round(t / FULL * 1000) / 10 : 100; };
+const REDUCE = matchMedia('(prefers-reduced-motion: reduce)').matches;
+const EASE = 'cubic-bezier(.22,1,.36,1)', SPRING = 'cubic-bezier(.34,1.45,.64,1)';
+
+let years = [thisYear - 1, thisYear].map(y => ({ year: y, total: 1695, short: 0, long: 0 }));
+let picked = new Set([years.length - 1]);   // markerte år (ett eller flere)
+const pickedList = () => [...picked].filter(i => i < years.length).sort((a, b) => a - b);
+let view = '2d';
+
+/* ---------- Tall som teller ---------- */
+function tween(el, to, fmt, dur = 650, delay = 0) {
+  const from = el._v ?? 0; el._v = to;
+  cancelAnimationFrame(el._raf); clearTimeout(el._to);
+  if (REDUCE || Math.abs(from - to) < 1e-9) { el.textContent = fmt(to); return; }
+  el._to = setTimeout(() => {
+    const t0 = performance.now();
+    const step = t => {
+      const k = Math.min(1, (t - t0) / dur), e = 1 - Math.pow(1 - k, 3);
+      el.textContent = fmt(from + (to - from) * e);
+      if (k < 1) el._raf = requestAnimationFrame(step);
+    };
+    el._raf = requestAnimationFrame(step);
+  }, delay);
+}
+const pct = v => nb(v) + ' %';
+const hrs = v => nb(v) + ' timer';
+
+/* ---------- Tabell ---------- */
+function buildRows(animateIndex = -1) {
+  const box = $('rows'); box.innerHTML = '';
+  years.forEach((y, i) => {
+    const r = document.createElement('div');
+    r.className = 'row' + (picked.has(i) ? ' sel' : '');
+    r.innerHTML = `
+      <span class="pick" title="Marker året – du kan markere flere"></span>
+      <input data-k="year" type="number" inputmode="numeric" value="${y.year}">
+      <select data-k="stilling">${stillingOptions(posOf(y))}</select>
+      <span class="ml ml-t">Arbeidstimer</span><span class="ml ml-s">Korttid · t</span><span class="ml ml-l">Langtid · t</span>
+      <input data-k="total" type="number" inputmode="decimal" min="1" step="0.5" value="${y.total}">
+      <input data-k="short" class="s" type="number" inputmode="decimal" min="0" step="0.5" value="${y.short}" placeholder="0">
+      <input data-k="long" class="l" type="number" inputmode="decimal" min="0" step="0.5" value="${y.long}" placeholder="0">
+      <span class="pct"></span>
+      <button class="del" title="Fjern år">×</button>`;
+    r.querySelector('.pick').onclick = () => togglePick(i);
+    r.querySelector('.del').onclick = () => {
+      if (years.length === 1) return;
+      const a = r.animate([{ opacity: 1, transform: 'none' }, { opacity: 0, transform: 'translateX(-16px) scale(.98)' }], { duration: 220, easing: EASE });
+      a.onfinish = () => {
+        years.splice(i, 1); markDirty();
+        picked = new Set([...picked].filter(j => j !== i).map(j => j > i ? j - 1 : j));
+        if (!picked.size) picked.add(years.length - 1);
+        buildRows(); render({ grid: true, anim: view === '3d' });
+      };
+    };
+    const selEl = r.querySelector('select'), totEl = r.querySelector('[data-k=total]');
+    selEl.addEventListener('change', () => {
+      const t = Math.round(FULL * num(selEl.value) / 100 * 10) / 10;
+      years[i].total = t; totEl.value = t; markDirty();
+      if (!REDUCE) totEl.animate([{ backgroundColor: 'rgba(47,93,80,.18)' }, { backgroundColor: '#fff' }], { duration: 700, easing: EASE });
+      render();
+    });
+    selEl.addEventListener('focus', () => focusRow(i));
+    r.querySelector('[data-k=year]').addEventListener('change', () => setTimeout(sortYears, 0));
+    r.querySelector('[data-k=year]').addEventListener('keydown', e => { if (e.key === 'Enter') e.target.blur(); });
+    r.querySelectorAll('input').forEach(inp => {
+      inp.addEventListener('input', () => {
+        years[i][inp.dataset.k] = inp.value; markDirty();
+        if (inp.dataset.k === 'total') selEl.innerHTML = stillingOptions(posOf(years[i]));
+        render();
+      });
+      inp.addEventListener('focus', () => focusRow(i));
+    });
+    box.appendChild(r);
+    if (i === animateIndex && !REDUCE) r.animate([{ opacity: 0, transform: 'translateY(-10px)' }, { opacity: 1, transform: 'none' }], { duration: 420, easing: SPRING });
+  });
+}
+function stillingOptions(v) {
+  const list = STILLINGER.includes(v) ? STILLINGER : [...STILLINGER, v].sort((a, b) => b - a);
+  return list.map(p => `<option value="${p}"${p === v ? ' selected' : ''}>${nb(p)} %</option>`).join('');
+}
+// Sorter årene i rekkefølge når et årstall er skrevet – raden glir på plass
+function sortYears() {
+  const order = years.slice().sort((a, b) => (num(a.year) || 0) - (num(b.year) || 0));
+  if (order.every((y, i) => y === years[i])) return;
+  const rows = [...$('rows').children];
+  const before = new Map(years.map((y, i) => [y, rows[i].getBoundingClientRect().top]));
+  const ae = document.activeElement, aeRow = ae && ae.closest ? ae.closest('#rows .row') : null;
+  const focusYear = aeRow ? years[rows.indexOf(aeRow)] : null, focusKey = ae?.dataset?.k;
+  const pickedObjs = new Set([...picked].map(i => years[i]));
+  const movedObj = years.find((y, i) => order.indexOf(y) !== i && Math.abs(order.indexOf(y) - i) > 1) || years.find((y, i) => order[i] !== y);
+  years = order; markDirty();
+  picked = new Set(years.map((y, i) => pickedObjs.has(y) ? i : -1).filter(i => i >= 0));
+  buildRows();
+  [...$('rows').children].forEach((r, i) => {
+    const dy = before.get(years[i]) - r.getBoundingClientRect().top;
+    if (REDUCE || !dy) return;
+    r.animate([{ transform: `translateY(${dy}px)` }, { transform: 'none' }], { duration: 600, easing: SPRING });
+    if (years[i] === movedObj) r.animate([{ backgroundColor: 'rgba(47,93,80,.14)' }, { backgroundColor: 'rgba(47,93,80,0)' }], { duration: 1400, easing: EASE });
+  });
+  if (focusYear && focusKey) $('rows').children[years.indexOf(focusYear)]?.querySelector(`[data-k=${focusKey}]`)?.focus();
+  render({ grid: true });
+}
+function syncPicks() {
+  document.querySelectorAll('#rows .row').forEach((el, j) => el.classList.toggle('sel', picked.has(j)));
+  render({ grid: true });
+}
+function select(i) { picked = new Set([i]); syncPicks(); }
+function togglePick(i) {
+  if (picked.has(i)) { if (picked.size === 1) return; picked.delete(i); } else picked.add(i);
+  syncPicks();
+}
+function pickAll() { picked = new Set(years.map((_, i) => i)); syncPicks(); }
+// når du skriver i et år: vis det året – men ikke ødelegg en flervalgsmarkering
+function focusRow(i) { if (!picked.has(i) && picked.size === 1) select(i); }
+function addYear() {
+  const last = years[years.length - 1];
+  markDirty();
+  years.push({ year: (num(last?.year) || thisYear) + 1, total: num(last?.total) || 1695, short: 0, long: 0 });
+  picked = new Set([years.length - 1]); buildRows(years.length - 1); render({ grid: true, anim: true });
+  $('rows').lastChild.querySelector('[data-k=short]').select();
+}
+
+/* ---------- Beregning ---------- */
+function calc(y) {
+  const total = num(y.total);
+  let s = num(y.short), l = num(y.long);
+  if (!(s >= 0)) s = 0; if (!(l >= 0)) l = 0;
+  let over = false;
+  if (total > 0 && s + l > total) { over = true; const k = total / (s + l); s *= k; l *= k; }
+  const ok = total > 0, away = s + l;
+  const pos = ok ? total / FULL * 100 : 0;
+  return { ok, over, pos, eff: ok ? (total - away) / FULL * 100 : 0, year: num(y.year), total, s, l, away, here: ok ? total - away : 0,
+    sPct: ok ? s / total * 100 : 0, lPct: ok ? l / total * 100 : 0, aPct: ok ? away / total * 100 : 0 };
+}
+let C = [];
+function yearsLabel(list) {
+  const ys = list.map(i => C[i].year).filter(isFinite);
+  if (!ys.length) return '';
+  if (ys.length === 1) return String(ys[0]);
+  const contiguous = ys.every((y, k) => k === 0 || y === ys[k - 1] + 1);
+  return contiguous ? `${ys[0]}–${ys[ys.length - 1]}` : ys.join(', ');
+}
+function aggregate(list) {
+  const cs = list.map(i => C[i]).filter(c => c.ok);
+  if (!cs.length) return { ...C[list[0]], n: 1 };
+  if (cs.length === 1) return { ...cs[0], n: 1 };
+  const sum = k => cs.reduce((a, c) => a + c[k], 0);
+  const total = sum('total'), s = sum('s'), l = sum('l'), away = s + l;
+  return { ok: true, n: cs.length, total, s, l, away, here: total - away,
+    sPct: s / total * 100, lPct: l / total * 100, aPct: away / total * 100,
+    pos: total / (FULL * cs.length) * 100, eff: (total - away) / (FULL * cs.length) * 100 };
+}
+
+function render(o = {}) {
+  const hpd = num($('hpd').value) > 0 ? num($('hpd').value) : 7.5;
+  const goalOn = $('goal').value !== '' && num($('goal').value) >= 0 && num($('goal').value) <= 100;
+  const goal = goalOn ? num($('goal').value) : null;
+  C = years.map(calc);
+
+  const warns = [];
+  document.querySelectorAll('#rows .row').forEach((r, i) => r.querySelector('.pct').textContent = C[i].ok ? pct(C[i].aPct) : '–');
+  C.forEach(c => { if (c.over) warns.push(`${c.year}: fravær er mer enn arbeidstimene – skalert ned.`); if (!c.ok) warns.push(`${c.year || 'Et år'}: mangler arbeidstimer.`); });
+  $('warn').textContent = warns.join(' ');
+
+  const list = pickedList();
+  const c = aggregate(list);
+  const multi = c.n > 1;
+  $('who').textContent = people[cur]?.name || '';
+  $('selYear').textContent = yearsLabel(list) + (multi ? ' samlet' : '');
+  tween($('awayPct'), c.aPct, pct);
+  tween($('herePct'), 100 - c.aPct, pct);
+  tween($('awayH'), c.away, hrs);
+  tween($('awayD'), c.away / hpd, v => nb(v) + (Math.round(v * 10) / 10 === 1 ? ' dag' : ' dager'));
+  tween($('shortPct'), c.sPct, pct);
+  tween($('longPct'), c.lPct, pct);
+  $('shortH').textContent = `(${nb(c.s)} t)`;
+  $('longH').textContent = `(${nb(c.l)} t)`;
+  tween($('hereH'), c.here, hrs);
+  const pr = v => nb(Math.round(v * 10) / 10);
+  $('eff').innerHTML = multi
+    ? `I snitt i praksis en <b>${pr(c.eff)} % stilling</b> · ansatt i snitt ${pr(c.pos)} %`
+    : `I praksis en <b>${pr(c.eff)} % stilling</b> · ansatt i ${pr(c.pos)} %`;
+  $('totalH').textContent = nb(c.total || 0);
+
+  const ch = $('change');
+  // sammenlign: ett år mot året før, eller første mot siste markerte år
+  const [A, B] = multi ? [C[list[0]], C[list[list.length - 1]]] : [C[list[0] - 1], C[list[0]]];
+  if (A && B && A.ok && B.ok) {
+    const d = B.aPct - A.aPct;
+    if (Math.abs(d) < 0.05) { ch.className = 'change flat'; ch.textContent = `Uendret fra ${A.year} til ${B.year}.`; }
+    else { ch.className = 'change ' + (d > 0 ? 'up' : 'down');
+      ch.textContent = multi
+        ? `${d > 0 ? '▲ Opp' : '▼ Ned'} ${nb(Math.abs(d))} prosentpoeng fra ${A.year} (${pct(A.aPct)}) til ${B.year} (${pct(B.aPct)}).`
+        : `${d > 0 ? '▲ Opp' : '▼ Ned'} ${nb(Math.abs(d))} prosentpoeng fra ${A.year} (${pct(A.aPct)}).`; }
+  } else { ch.className = 'change'; ch.textContent = ''; }
+
+  $('barH').style.width = (100 - c.aPct) + '%';
+  $('barS').style.width = c.sPct + '%';
+  $('barL').style.width = c.lPct + '%';
+  const gl = $('goalLine'), gt = $('goalTag');
+  if (goalOn) {
+    gl.style.display = 'block'; gl.style.left = `calc(${100 - goal}% - 1.5px)`;
+    gt.style.left = (100 - goal) + '%'; gt.textContent = 'Grense ' + pct(goal);
+    gt.style.color = c.aPct > goal ? 'var(--short)' : 'var(--ink)';
+  } else { gl.style.display = 'none'; gt.textContent = ''; }
+
+  if (view === '2d') renderTrend(goal, o.anim);
+  else if (o.anim) build3d(true); else update3d();
+  renderGrid(list, c, hpd, o.grid);
+}
+
+/* ---------- 2D trend ---------- */
+function renderTrend(goal, animate) {
+  const t = $('trend');
+  const cols = [...t.querySelectorAll('.col')];
+  if (animate || cols.length !== C.length) {
+    t.innerHTML = '';
+    C.forEach((c, i) => {
+      const col = document.createElement('div');
+      col.className = 'col';
+      col.innerHTML = `
+        <div class="lbl"><b></b><small></small></div>
+        <div class="stack"><div style="background:var(--long)"></div><div style="background:var(--short)"></div><div style="flex:1;background:var(--here)"></div></div>
+        <div class="yr"></div>`;
+      col.onclick = e => (e.metaKey || e.shiftKey || e.ctrlKey) ? togglePick(i) : select(i);
+      col.title = 'Klikk for å vise året · ⌘-klikk for å markere flere';
+      t.appendChild(col);
+      if (animate && !REDUCE) {
+        const d = i * 120;
+        col.querySelector('.stack').animate([{ transform: 'scaleY(0)' }, { transform: 'scaleY(1)' }], { duration: 900, delay: d, easing: EASE, fill: 'backwards' });
+        col.querySelector('.lbl').animate([{ opacity: 0, transform: 'translateY(8px)' }, { opacity: 1, transform: 'none' }], { duration: 500, delay: d + 500, easing: EASE, fill: 'backwards' });
+        const b = col.querySelector('.lbl b'); b._v = 0; b.textContent = pct(0); b._delay = d + 500;
+      }
+    });
+  }
+  // oppdater på plass – høydene glir til nye verdier
+  [...t.querySelectorAll('.col')].forEach((col, i) => {
+    const c = C[i];
+    col.className = 'col' + (picked.has(i) ? ' sel' : '');
+    const [L, S] = col.querySelector('.stack').children;
+    L.style.height = c.lPct + '%'; S.style.height = c.sPct + '%';
+    const b = col.querySelector('.lbl b');
+    tween(b, c.aPct, pct, b._delay ? 700 : 500, b._delay || 0); b._delay = 0;
+    col.querySelector('.lbl small').textContent = `kort ${nb(c.sPct)} · lang ${nb(c.lPct)}`;
+    col.querySelector('.yr').textContent = isFinite(c.year) ? c.year : '';
+  });
+  let g = t.querySelector('.goalline');
+  if (goal !== null) {
+    if (!g) { g = document.createElement('div'); g.className = 'goalline'; g.innerHTML = '<span></span>'; t.appendChild(g); }
+    g.style.display = 'block'; g.style.transition = 'bottom .6s var(--ease)';
+    g.style.bottom = (34 + 260 * (1 - goal / 100)) + 'px';
+    g.firstChild.textContent = `Grense ${pct(goal)}`;
+  } else if (g) g.remove();
+}
+
+/* ---------- 3D (ren CSS) ---------- */
+const H = 400, W = 118, D = 118, GAP = 210;
+const CAM = { rx: -8, ry: 12 };        // standardvinkelen
+let cam = { ...CAM }, vel = { rx: 0, ry: 0 }, springRaf = 0;
+
+function face(w, h, tf, rgb, a, shade) {
+  const f = document.createElement('div');
+  f.className = 'face';
+  f.style.cssText = `width:${w}px;height:${h}px;left:${-w / 2}px;top:${-h / 2}px;transform:${tf};`;
+  const sheen = shade > 0
+    ? `linear-gradient(115deg, rgba(255,255,255,${0.38 * shade}) 0%, rgba(255,255,255,0) 50%)`
+    : `linear-gradient(rgba(0,0,0,${-shade}), rgba(0,0,0,${-shade}))`;
+  f.style.background = `${sheen}, rgba(${rgb},${a})`;
+  return f;
+}
+function segment(rgb, kind) {
+  // bygget i full høyde H; wrapperen står i bunnen og skaleres i høyden (scaleY),
+  // så søylene kan gli opp og ned når tallene endres
+  const w = document.createElement('div');
+  w.className = 'seg3'; w.dataset.kind = kind;
+  w.style.position = 'absolute';
+  const b = document.createElement('div');
+  b.style.position = 'absolute';
+  b.style.transform = `translateY(${-H / 2}px)`;
+  b.append(
+    face(W, H, `translateZ(${D / 2}px)`, rgb, .6, 1),
+    face(W, H, `rotateY(180deg) translateZ(${D / 2}px)`, rgb, .38, -0.1),
+    face(D, H, `rotateY(90deg) translateZ(${W / 2}px)`, rgb, .52, -0.16),
+    face(D, H, `rotateY(-90deg) translateZ(${W / 2}px)`, rgb, .5, -0.1),
+    face(W, D, `rotateX(90deg) translateZ(${H / 2}px)`, rgb, .5, 1.2)
+  );
+  w.appendChild(b);
+  return w;
+}
+const segTf = (h, yb) => `translateY(${-yb}px) scaleY(${Math.max(h, 0.01) / H})`;
+function segGeom(c) {
+  const hH = H * (1 - c.aPct / 100), hS = H * c.sPct / 100, hL = H * c.lPct / 100;
+  return { here: [hH, 0], short: [hS, hH], long: [hL, hH + hS] };
+}
+function build3d(animate) {
+  const st = $('stage'); st.innerHTML = ''; st._n = C.length;
+  const fl = document.createElement('div'); fl.className = 'floor'; st.appendChild(fl);
+  const n = C.length;
+  const css = getComputedStyle(document.documentElement);
+  const COL = { here: css.getPropertyValue('--pillar-rgb').trim(), short: css.getPropertyValue('--short-rgb').trim(), long: css.getPropertyValue('--long-rgb').trim() };
+  const STAGGER = 750;
+
+  C.forEach((c, i) => {
+    const p = document.createElement('div'); p.className = 'pillar';
+    p.style.transform = `translateX(${(i - (n - 1) / 2) * GAP}px)`;
+    const els = ['here', 'short', 'long'].map(k => segment(COL[k], k));
+    els.forEach(e => p.appendChild(e));
+
+    const sh = document.createElement('div');
+    sh.style.cssText = `position:absolute;width:${W * 1.6}px;height:${D * 1.6}px;left:${-W * .8}px;top:${-D * .8}px;transform:translateY(-0.5px) rotateX(90deg);background:radial-gradient(rgba(0,0,0,.22),rgba(0,0,0,0) 65%);`;
+    p.appendChild(sh);
+
+    const glow = document.createElement('div');
+    glow.style.cssText = `position:absolute;width:${W * 2.2}px;height:${D * 2.2}px;left:${-W * 1.1}px;top:${-D * 1.1}px;transform:translateY(${-H - 1}px) rotateX(90deg);background:radial-gradient(rgba(${COL.short},.55),rgba(${COL.short},0) 60%);opacity:0;pointer-events:none;`;
+    p.appendChild(glow);
+
+    const yr = document.createElement('div'); yr.className = 'p3year';
+    yr.style.transform = `translate3d(0, -62px, ${D / 2 + 1}px)`;
+    p.appendChild(yr);
+
+    const lb = document.createElement('div'); lb.className = 'p3label'; lb.dataset.bill = '1';
+    lb.dataset.y = -(H + 96);
+    lb.innerHTML = `<div class="in"><b></b><small></small></div>`;
+    p.appendChild(lb);
+    st.appendChild(p);
+    update3dPillar(p, c, true);
+
+    if (animate && !REDUCE) {
+      const t0 = i * STAGGER, G = segGeom(c);
+      let t = t0;
+      els.forEach(el => {
+        const [h, yb] = G[el.dataset.kind];
+        if (h <= 0.3) return;
+        const fast = el.dataset.kind !== 'here';
+        el.animate([{ transform: segTf(0.01, yb), visibility: 'hidden' }, { transform: segTf(h, yb), visibility: 'visible' }],
+          { duration: fast ? 650 : 1000, delay: t, easing: fast ? SPRING : EASE, fill: 'backwards' });
+        t += fast ? 420 : 850;
+      });
+      sh.animate([{ opacity: 0, transform: 'translateY(-0.5px) rotateX(90deg) scale(.4)' }, { opacity: 1, transform: 'translateY(-0.5px) rotateX(90deg) scale(1)' }], { duration: 900, delay: t0, easing: EASE, fill: 'backwards' });
+      yr.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 500, delay: t0 + 450, fill: 'backwards' });
+      const redStart = t0 + 850;
+      if (c.away > 0) glow.animate([{ opacity: 0 }, { opacity: 1, offset: .35 }, { opacity: 0 }], { duration: 1300, delay: redStart + 150, easing: 'ease-out' });
+      lb.firstChild.animate([{ opacity: 0, transform: 'translateY(14px) scale(.9)' }, { opacity: 1, transform: 'none' }], { duration: 600, delay: redStart, easing: SPRING, fill: 'backwards' });
+      const b = lb.querySelector('b'); b._v = 0; b.textContent = pct(0); tween(b, c.aPct, pct, 900, redStart);
+    }
+  });
+  applyCam();
+}
+// Oppdater søylene på plass: de glir til ny høyde mens du skriver
+function update3dPillar(p, c, instant) {
+  const G = segGeom(c);
+  p.querySelectorAll('.seg3').forEach(el => {
+    const [h, yb] = G[el.dataset.kind];
+    el.style.transition = instant || REDUCE ? 'none' : 'transform .75s cubic-bezier(.22,1.2,.36,1)';
+    el.style.transform = segTf(h, yb);
+    el.style.visibility = h > 0.3 ? 'visible' : 'hidden';
+  });
+  p.querySelector('.p3year').textContent = isFinite(c.year) ? c.year : '';
+  const b = p.querySelector('.p3label b');
+  if (instant) { b._v = c.aPct; b.textContent = pct(c.aPct); } else tween(b, c.aPct, pct, 600);
+  p.querySelector('.p3label small').textContent = `kort ${nb(c.sPct)} % · lang ${nb(c.lPct)} %`;
+}
+function update3d() {
+  const st = $('stage');
+  if (st._n !== C.length) return build3d(true);
+  st.querySelectorAll('.pillar').forEach((p, i) => update3dPillar(p, C[i], false));
+}
+function applyCam() {
+  const sc = $('scene'), n = Math.max(C.length, 2);
+  const fitW = sc.clientWidth / (n * GAP + 140);
+  const fitH = sc.clientHeight / (H + 190);
+  const fit = Math.min(1.25, fitW, fitH);
+  const st = $('stage');
+  // midtstill: innholdet går fra gulvet (0) til toppen av etiketten (H + 96)
+  st.style.top = `calc(50% + ${((H + 96) / 2 - 30) * fit}px)`;
+  st.style.transform = `scale(${fit}) rotateX(${cam.rx}deg) rotateY(${cam.ry}deg)`;
+  document.querySelectorAll('[data-bill]').forEach(el =>
+    el.style.transform = `translateY(${el.dataset.y}px) rotateY(${-cam.ry}deg) rotateX(${-cam.rx}deg)`);
+}
+// Dra for å kikke, slipp og den fjærer tilbake til standardvinkelen
+(function drag() {
+  const sc = $('scene'); let px, py, down = false;
+  sc.addEventListener('pointerdown', e => {
+    if (e.target.closest('button')) return;
+    down = true; px = e.clientX; py = e.clientY; cancelAnimationFrame(springRaf); sc.setPointerCapture(e.pointerId);
+  });
+  sc.addEventListener('pointermove', e => {
+    if (!down) return;
+    cam.ry = Math.max(-70, Math.min(70, cam.ry + (e.clientX - px) * 0.3));
+    cam.rx = Math.max(-55, Math.min(8, cam.rx - (e.clientY - py) * 0.22));
+    px = e.clientX; py = e.clientY; applyCam();
+  });
+  const release = () => { if (!down) return; down = false; springBack(); };
+  sc.addEventListener('pointerup', release); sc.addEventListener('pointercancel', release);
+})();
+function springBack() {
+  vel = { rx: 0, ry: 0 };
+  let last = performance.now();
+  const step = t => {
+    const dt = Math.min(0.032, (t - last) / 1000); last = t;
+    let moving = false;
+    for (const k of ['rx', 'ry']) {
+      const f = (CAM[k] - cam[k]) * 90 - vel[k] * 13;
+      vel[k] += f * dt; cam[k] += vel[k] * dt;
+      if (Math.abs(CAM[k] - cam[k]) > 0.02 || Math.abs(vel[k]) > 0.02) moving = true;
+    }
+    if (!moving) cam = { ...CAM };
+    applyCam();
+    if (moving) springRaf = requestAnimationFrame(step);
+  };
+  springRaf = requestAnimationFrame(step);
+}
+
+function setView(v) {
+  if (v === view) return;
+  view = v;
+  document.body.classList.toggle('v3d', v === '3d');
+  $('b2d').classList.toggle('on', v === '2d'); $('b3d').classList.toggle('on', v === '3d');
+  movePill();
+  $('trend').style.display = v === '2d' ? 'flex' : 'none';
+  $('scene').style.display = v === '3d' ? 'block' : 'none';
+  $('hereSw').style.background = v === '3d' ? 'var(--pillar)' : 'var(--here)';
+  if (v === '3d') { cancelAnimationFrame(springRaf); cam = { ...CAM }; }
+  render({ anim: true });
+}
+function movePill() {
+  const on = $('seg').querySelector('button.on'), pill = $('pill');
+  pill.style.width = on.offsetWidth + 'px';
+  pill.style.transform = `translateX(${on.offsetLeft}px)`;
+}
+window.addEventListener('resize', () => { view === '3d' && applyCam(); movePill(); });
+
+/* ---------- Årskalender ---------- */
+function fillGrid(grid, c, hpd, wave) {
+  const days = (c.total || 0) / hpd;
+  const n = Math.max(0, Math.ceil(days - 1e-9));
+  if (grid.children.length !== n) {
+    grid.innerHTML = '';
+    grid.style.gridTemplateColumns = `repeat(${Math.ceil(n / 5)}, 1fr)`;
+    for (let i = 0; i < n; i++) { const d = document.createElement('div'); d.className = 'day'; d.innerHTML = '<i style="background:var(--short)"></i><i style="background:var(--long)"></i>'; grid.appendChild(d); }
+  }
+  const sd = c.s / hpd, ld = c.l / hpd;
+  [...grid.children].forEach((d, i) => {
+    const sFill = Math.max(0, Math.min(1, sd - i));
+    const lFill = Math.max(0, Math.min(1 - sFill, (sd + ld) - i - sFill));
+    const [a, b] = d.children;
+    const delay = wave && !REDUCE ? Math.floor(i / 5) * 18 + 'ms' : '0ms';
+    a.style.transitionDelay = b.style.transitionDelay = delay;
+    a.style.height = sFill * 100 + '%';
+    b.style.bottom = sFill * 100 + '%'; b.style.height = lFill * 100 + '%';
+  });
+}
+function renderGrid(list, c, hpd, wave) {
+  const multi = list.length > 1;
+  const wrap = $('grids'), key = list.join(',');
+  // én stripe per markert år – gjenbrukes så rutene glir når tallene endres
+  if (wrap._key !== key) {
+    wrap.innerHTML = ''; wrap._key = key;
+    list.forEach(() => { const b = document.createElement('div'); b.className = 'yblock'; b.innerHTML = '<div class="ylabel"></div><div class="grid"></div>'; wrap.appendChild(b); });
+  }
+  [...wrap.children].forEach((blk, k) => {
+    const cy = C[list[k]];
+    const lab = blk.querySelector('.ylabel');
+    lab.style.display = multi ? 'flex' : 'none';
+    lab.innerHTML = `${isFinite(cy.year) ? cy.year : ''} <span>${pct(cy.aPct)} borte</span>`;
+    fillGrid(blk.querySelector('.grid'), cy, hpd, wave);
+  });
+  const days = (c.total || 0) / hpd, sd = c.s / hpd, ld = c.l / hpd;
+  $('gridTitle').textContent = list.length ? `${yearsLabel(list)}, dag for dag` : 'Ett arbeidsår, dag for dag';
+  $('daysNote').textContent = multi
+    ? `Hver rute er én arbeidsdag (${nb(hpd)} t). Ett felt per år – tallene under er alle markerte år til sammen.`
+    : `Hver rute er én arbeidsdag (${nb(hpd)} t) i en ${nb(c.pos)} % stilling – ${nb(days, 0)} arbeidsdager i året.`;
+  const dg = v => nb(v) + (Math.round(v * 10) / 10 === 1 ? ' dag' : ' dager');
+  const tiles = $('tiles');
+  const html = `
+    <div class="tile s"><b>${dg(sd)}</b><span>borte korttid · ${nb(c.s)} timer</span></div>
+    <div class="tile l"><b>${dg(ld)}</b><span>borte langtid · ${nb(c.l)} timer</span></div>
+    <div class="tile t"><b>${nb(sd + ld)} av ${nb(days, 0)}</b><span>arbeidsdager borte${multi ? ` over ${list.length} år` : ''} · ≈ ${nb((sd + ld) / 5)} uker</span></div>
+    <div class="tile e"><b>${nb(Math.round(c.eff * 10) / 10)} % stilling</b><span>faktisk på jobb${multi ? ' i snitt' : ''} · ansatt i ${nb(Math.round(c.pos * 10) / 10)} %</span></div>`;
+  if (tiles._h !== html) {
+    tiles.innerHTML = html; tiles._h = html;
+    if (wave && !REDUCE) [...tiles.children].forEach((t, k) => t.animate([{ opacity: 0, transform: 'translateY(10px) scale(.97)' }, { opacity: 1, transform: 'none' }], { duration: 500, delay: 200 + k * 70, easing: SPRING, fill: 'backwards' }));
+  }
+}
+
+/* ---------- Fil ---------- */
+function toast(msg) {
+  const t = $('toast'); t.textContent = msg; t.classList.add('on');
+  clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove('on'), 2200);
+}
+/* ---------- Personer og lagring ---------- */
+const STORE = 'fravaer.personer.v1';
+let people = [], cur = 0, dirty = false;
+const blankYears = () => [thisYear - 1, thisYear].map(y => ({ year: y, total: 1695, short: 0, long: 0 }));
+const newPerson = name => ({ id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), name, hpd: '7.5', goal: '', years: blankYears() });
+const cleanYears = ys => ys.map(y => ({ year: y.year, total: y.total, short: y.short, long: y.long }));
+
+function markDirty() { dirty = true; $('savebtn').classList.add('dirty'); }
+function commit() { // skriv det som står på skjermen inn i personen
+  const P = people[cur]; if (!P) return;
+  P.hpd = $('hpd').value; P.goal = $('goal').value; P.years = cleanYears(years);
+}
+function loadPerson(i) {
+  cur = i; const P = people[i];
+  $('hpd').value = P.hpd || 7.5; $('goal').value = P.goal ?? '';
+  years = cleanYears(P.years?.length ? P.years : blankYears());
+  picked = new Set([years.length - 1]);
+  $('pname').textContent = P.name || 'Uten navn';
+  buildRows(); render({ anim: true, grid: true });
+}
+function switchPerson(i) {
+  closeMenu();
+  if (i === cur) return;
+  commit(); loadPerson(i);
+  if (!REDUCE) document.querySelectorAll('.card, .years').forEach((el, k) => el.animate([{ opacity: .3, transform: 'translateY(8px)' }, { opacity: 1, transform: 'none' }], { duration: 500, delay: k * 50, easing: EASE }));
+}
+const NATIVE = !!(window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.fravaer);
+const post = msg => window.webkit.messageHandlers.fravaer.postMessage(msg);
+const storeJSON = () => JSON.stringify({ v: 1, cur: people[cur]?.id, people });
+function saveAll() {
+  commit();
+  try {
+    if (NATIVE) post({ type: 'save', json: storeJSON() });
+    else localStorage.setItem(STORE, storeJSON());
+    dirty = false; $('savebtn').classList.remove('dirty');
+    toast('✓ Lagret på denne telefonen');
+  } catch { toast('Kunne ikke lagre – bruk «Sikkerhetskopi»'); }
+}
+function loadAll() {
+  try {
+    const d = JSON.parse((NATIVE ? window.__NATIVE_DATA__ : localStorage.getItem(STORE)) || 'null');
+    if (d && Array.isArray(d.people) && d.people.length) {
+      people = d.people;
+      const i = people.findIndex(p => p.id === d.cur);
+      return i >= 0 ? i : 0;
+    }
+  } catch {}
+  people = [newPerson('')];
+  return 0;
+}
+
+/* meny: bare navn vises */
+function renderMenu() {
+  const order = people.map((p, i) => i).sort((a, b) => (people[a].name || 'Uten navn').localeCompare(people[b].name || 'Uten navn', 'nb'));
+  $('plist').innerHTML = '';
+  order.forEach(i => {
+    const b = document.createElement('button');
+    b.className = 'pitem' + (i === cur ? ' cur' : ''); b.setAttribute('role', 'option');
+    b.textContent = people[i].name || 'Uten navn';
+    b.onclick = () => switchPerson(i);
+    $('plist').appendChild(b);
+  });
+}
+let formMode = null;
+function openMenu() { renderMenu(); hideForm(); $('person').classList.add('open'); }
+function closeMenu() { $('person').classList.remove('open'); hideForm(); }
+function showForm(mode) {
+  formMode = mode; $('pform').classList.add('on');
+  $('pinput').value = mode === 'rename' ? (people[cur].name || '') : '';
+  $('pok').textContent = mode === 'rename' ? 'Endre' : 'Legg til';
+  setTimeout(() => $('pinput').focus(), 30);
+}
+function hideForm() { formMode = null; $('pform').classList.remove('on'); }
+function submitForm() {
+  const name = $('pinput').value.trim(); if (!name) return;
+  if (formMode === 'rename') { people[cur].name = name; $('pname').textContent = name; render(); }
+  else { commit(); people.push(newPerson(name)); loadPerson(people.length - 1); }
+  markDirty(); closeMenu(); toast(formMode === 'rename' ? '✓ Nytt navn' : '✓ ' + name + ' lagt til');
+}
+$('ptrigger').onclick = e => { e.stopPropagation(); $('person').classList.contains('open') ? closeMenu() : openMenu(); };
+$('pmenu').addEventListener('click', e => e.stopPropagation());
+document.addEventListener('click', closeMenu);
+$('pnew').onclick = () => showForm('new');
+$('pren').onclick = () => showForm('rename');
+$('pok').onclick = submitForm;
+$('pinput').addEventListener('keydown', e => { if (e.key === 'Enter') submitForm(); if (e.key === 'Escape') hideForm(); });
+$('pdel').onclick = () => {
+  const nm = people[cur].name || 'Uten navn';
+  if (!confirm(`Slette ${nm}?`)) return;
+  people.splice(cur, 1);
+  if (!people.length) people.push(newPerson(''));
+  markDirty(); closeMenu(); loadPerson(0); toast(nm + ' slettet – trykk Lagre');
+};
+
+/* sikkerhetskopi til fil */
+function exportFile() {
+  commit();
+  const json = JSON.stringify({ app: 'fravaer', v: 3, people }, null, 2);
+  const fname = `fravaer-sikkerhetskopi-${new Date().toISOString().slice(0, 10)}.json`;
+  if (NATIVE) return post({ type: 'export', json, filename: fname });
+  const blob = new Blob([json], { type: 'application/json' });
+  if (matchMedia('(hover: none)').matches && navigator.canShare) {
+    const f = new File([blob], fname, { type: 'application/json' });
+    if (navigator.canShare({ files: [f] })) {
+      navigator.share({ files: [f] }).then(() => toast('✓ Sikkerhetskopi delt')).catch(() => {});
+      return;
+    }
+  }
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob); a.download = fname;
+  document.body.appendChild(a); a.click(); a.remove();
+  toast('✓ Sikkerhetskopi i Nedlastinger');
+}
+$('file').addEventListener('change', e => {
+  const f = e.target.files[0]; if (!f) return;
+  const r = new FileReader();
+  r.onload = () => {
+    try {
+      const d = JSON.parse(r.result);
+      commit();
+      if (Array.isArray(d.people) && d.people.length) {
+        if (!confirm(`Filen har ${d.people.length} personer. Erstatte alle personene som er her nå?`)) return;
+        people = d.people.map(p => ({ ...newPerson(p.name || ''), ...p, years: cleanYears(p.years || []) }));
+        loadPerson(0);
+      } else if (Array.isArray(d.years) && d.years.length) {   // eldre fil med én person
+        people.push({ ...newPerson(d.name || ''), hpd: d.hpd || '7.5', goal: d.goal ?? '', years: cleanYears(d.years) });
+        loadPerson(people.length - 1);
+      } else throw 0;
+      markDirty(); toast('✓ Åpnet – trykk Lagre for å beholde');
+    } catch { toast('Kunne ikke lese filen'); }
+  };
+  r.readAsText(f); e.target.value = '';
+});
+
+/* ---------- Utskrift: tegn 3D-grafen som bilde (nettlesere flater ut CSS-3D ved utskrift) ---------- */
+function drawPrint3d() {
+  const sc = $('scene');
+  const SW = sc.clientWidth || 1000, SH = sc.clientHeight || 640, DPR = 2;
+  const cv = document.createElement('canvas'); cv.width = SW * DPR; cv.height = SH * DPR;
+  const g = cv.getContext('2d'); g.scale(DPR, DPR);
+  // bakgrunn som i scenen
+  const bg = g.createRadialGradient(SW / 2, SH * .8, 0, SW / 2, SH * .8, Math.max(SW, SH) * .75);
+  bg.addColorStop(0, '#ffffff'); bg.addColorStop(.5, '#F5F7F8'); bg.addColorStop(1, '#E9EDF0');
+  g.fillStyle = bg; g.fillRect(0, 0, SW, SH);
+
+  const n = Math.max(C.length, 2);
+  const fit = Math.min(1.25, SW / (n * GAP + 140), SH / (H + 190));
+  const sx = SW / 2, sy = SH / 2 + ((H + 96) / 2 - 30) * fit;
+  const Dp = 1800, ox = SW / 2, oy = SH * .35;
+  const rx = CAM.rx * Math.PI / 180, ry = CAM.ry * Math.PI / 180;
+  const P = (x, y, z) => {           // samme matematikk som CSS: scale · rotateX · rotateY + perspektiv
+    const x1 = x * Math.cos(ry) + z * Math.sin(ry), z1 = -x * Math.sin(ry) + z * Math.cos(ry);
+    const y2 = y * Math.cos(rx) - z1 * Math.sin(rx), z2 = y * Math.sin(rx) + z1 * Math.cos(rx);
+    const X = sx + x1 * fit, Y = sy + y2 * fit, Z = z2 * fit, f = Dp / (Dp - Z);
+    return { x: ox + (X - ox) * f, y: oy + (Y - oy) * f, z: Z, f };
+  };
+  const css = getComputedStyle(document.documentElement);
+  const COL = { here: css.getPropertyValue('--pillar-rgb'), short: css.getPropertyValue('--short-rgb'), long: css.getPropertyValue('--long-rgb') };
+  const rgb = k => COL[k].split(',').map(Number);
+  const mix = (c, t, k) => c.map((v, i) => Math.round(v + (t[i] - v) * k));
+  const faces = [];
+  C.forEach((c, i) => {
+    const cx = (i - (C.length - 1) / 2) * GAP, G = segGeom(c);
+    // skygge på gulvet
+    const s0 = P(cx, 0, 0);
+    const sg = g.createRadialGradient(s0.x, s0.y, 0, s0.x, s0.y, W * fit * s0.f);
+    sg.addColorStop(0, 'rgba(0,0,0,.2)'); sg.addColorStop(1, 'rgba(0,0,0,0)');
+    g.fillStyle = sg; g.beginPath(); g.ellipse(s0.x, s0.y, W * fit * s0.f, W * fit * s0.f * .35, 0, 0, Math.PI * 2); g.fill();
+    for (const k of ['here', 'short', 'long']) {
+      const [h, yb] = G[k]; if (h <= 0.3) continue;
+      const x0 = cx - W / 2, x1 = cx + W / 2, y0 = -(yb + h), y1 = -yb, z0 = -D / 2, z1 = D / 2, base = rgb(k);
+      const F = (pts, col, a) => faces.push({ pts: pts.map(p => P(...p)), col, a });
+      F([[x0, y0, z0], [x1, y0, z0], [x1, y1, z0], [x0, y1, z0]], mix(base, [0, 0, 0], .1), .38);   // bak
+      F([[x0, y0, z0], [x0, y0, z1], [x0, y1, z1], [x0, y1, z0]], mix(base, [0, 0, 0], .1), .5);    // venstre
+      F([[x1, y0, z0], [x1, y0, z1], [x1, y1, z1], [x1, y1, z0]], mix(base, [0, 0, 0], .16), .52);  // høyre
+      F([[x0, y0, z0], [x1, y0, z0], [x1, y0, z1], [x0, y0, z1]], mix(base, [255, 255, 255], .3), .55); // topp
+      F([[x0, y0, z1], [x1, y0, z1], [x1, y1, z1], [x0, y1, z1]], mix(base, [255, 255, 255], .12), .62); // front
+    }
+  });
+  faces.forEach(f => f.d = f.pts.reduce((a, p) => a + p.z, 0) / f.pts.length);
+  faces.sort((a, b) => a.d - b.d);
+  for (const f of faces) {
+    g.beginPath(); f.pts.forEach((p, k) => k ? g.lineTo(p.x, p.y) : g.moveTo(p.x, p.y)); g.closePath();
+    g.fillStyle = `rgba(${f.col.join(',')},${f.a})`; g.fill();
+    g.strokeStyle = 'rgba(255,255,255,.55)'; g.lineWidth = 1; g.stroke();
+  }
+  // tekst: årstall på fronten, prosent over søylen
+  const font = (w, px) => `${w} ${px}px "Avenir Next", Avenir, -apple-system, sans-serif`;
+  g.textAlign = 'center'; g.textBaseline = 'middle';
+  C.forEach((c, i) => {
+    const cx = (i - (C.length - 1) / 2) * GAP;
+    const yp = P(cx, -42, D / 2 + 1);
+    g.font = font(700, 30 * fit * yp.f); g.fillStyle = '#fff';
+    g.shadowColor = 'rgba(0,0,0,.25)'; g.shadowBlur = 8;
+    g.fillText(isFinite(c.year) ? c.year : '', yp.x, yp.y);
+    g.shadowBlur = 0;
+    const lp = P(cx, -(H + 96) + 24, 0), sp = P(cx, -(H + 96) + 60, 0);
+    g.font = font(700, 40 * fit * lp.f); g.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--short');
+    g.fillText(pct(c.aPct), lp.x, lp.y);
+    g.font = font(600, 14 * fit * sp.f); g.fillStyle = '#6B7175';
+    g.fillText(`kort ${nb(c.sPct)} % · lang ${nb(c.lPct)} %`, sp.x, sp.y);
+  });
+  $('print3d').src = cv.toDataURL('image/png');
+}
+function printDoc() {
+  if (view === '3d') drawPrint3d();
+  if (NATIVE) setTimeout(() => post({ type: 'print' }), 60);
+  else window.print();
+}
+window.addEventListener('beforeprint', () => { if (view === '3d') drawPrint3d(); });
+
+function toggleShow() {
+  document.body.classList.toggle('show');
+  if (!REDUCE) $('wrap').animate([{ opacity: 0, transform: 'scale(.985)' }, { opacity: 1, transform: 'none' }], { duration: 450, easing: EASE });
+  render({ anim: true });
+}
+function clearAll() {
+  if (!confirm(`Tømme alle tall for ${people[cur].name || 'denne personen'}?`)) return;
+  $('goal').value = ''; markDirty();
+  years = blankYears();
+  picked = new Set([years.length - 1]); buildRows(); render({ anim: true, grid: true });
+}
+
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') { if ($('person').classList.contains('open')) return closeMenu(); if (document.body.classList.contains('show')) toggleShow(); }
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') { e.preventDefault(); saveAll(); }
+});
+for (const id of ['hpd', 'goal']) $(id).addEventListener('input', () => { markDirty(); render(); });
+window.addEventListener('beforeunload', e => { if (dirty) { e.preventDefault(); e.returnValue = ''; } });
+loadPerson(loadAll());
+requestAnimationFrame(movePill);
+setView('3d'); // app: 3D som standard
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js'); // virker uten nett etter første åpning
+</script>
+<!-- iPhone: veiledning for å legge appen på Hjem-skjermen. Vises bare i Safari/Chrome på iPhone/iPad når den IKKE er installert. -->
+<style>
+  .inst { position: fixed; inset: 0; z-index: 50; display: none; align-items: flex-end; justify-content: center;
+    background: rgba(29,27,24,0); transition: background .4s var(--ease); }
+  .inst.on { display: flex; }
+  .inst.vis { background: rgba(29,27,24,.32); }
+  .inst-card { width: min(440px, 100%); margin: 0 10px calc(10px + env(safe-area-inset-bottom)); background: #fff; border-radius: 28px;
+    padding: 22px 22px 18px; box-shadow: 0 30px 80px -20px rgba(29,27,24,.5); transform: translateY(110%);
+    transition: transform .6s var(--spring); }
+  .inst.vis .inst-card { transform: none; }
+  .inst-head { display: flex; gap: 14px; align-items: center; margin-bottom: 14px; }
+  .inst-head img { width: 58px; height: 58px; border-radius: 14px; box-shadow: 0 8px 18px -8px rgba(0,0,0,.4); }
+  .inst-head h2 { margin: 0; font-size: 21px; letter-spacing: -.01em; }
+  .inst-head p { margin: 2px 0 0; color: var(--muted); font-size: 14px; }
+  .inst ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; counter-reset: s; }
+  .inst li { counter-increment: s; display: flex; gap: 12px; align-items: center; padding: 11px 12px; border-radius: 16px; background: var(--bg);
+    font-size: 16px; line-height: 1.3; opacity: 0; transform: translateY(10px); transition: opacity .5s var(--ease), transform .6s var(--spring); }
+  .inst.vis li { opacity: 1; transform: none; }
+  .inst.vis li:nth-child(2) { transition-delay: .08s; } .inst.vis li:nth-child(3) { transition-delay: .16s; } .inst.vis li:nth-child(4) { transition-delay: .24s; }
+  .inst li::before { content: counter(s); flex: none; width: 28px; height: 28px; border-radius: 50%; background: var(--here); color: #fff;
+    display: grid; place-items: center; font-weight: 700; font-size: 14px; }
+  .inst li small { display: block; color: var(--muted); font-size: 13px; margin-top: 2px; }
+  .inst li svg { flex: none; width: 22px; height: 22px; color: #0A7AFF; margin-left: auto; }
+  .inst .inst-note { color: var(--muted); font-size: 13px; margin: 12px 2px 14px; line-height: 1.4; }
+  .inst .inst-row { display: flex; gap: 8px; }
+  .inst .inst-row button { flex: 1; padding: 13px; font-size: 16px; }
+  .instlink { display: none; }
+  body.can-install .instlink { display: inline-flex; }
+</style>
+<div class="inst" id="inst" role="dialog" aria-label="Installer på iPhone">
+  <div class="inst-card">
+    <div class="inst-head"><img src="icon-180.png" alt=""><div><h2>Få Fravær som app</h2><p>Da blir den en app – åpner i fullskjerm og virker uten nett.</p></div></div>
+    <ol>
+      <li><span>Åpne denne siden i <b>Safari</b></span></li>
+      <li><span>Trykk på <b>Del</b>-knappen <small>(på nyere iPhone: trykk <b>•••</b> nederst først)</small></span>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15V3"/><path d="m7 8 5-5 5 5"/><path d="M7 11H5a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-8a1 1 0 0 0-1-1h-2"/></svg></li>
+      <li><span>Velg <b>Legg til på Hjem-skjerm</b> <small>(bla ned om du ikke ser den)</small></span>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="3" width="18" height="18" rx="4"/><path d="M12 8v8M8 12h8"/></svg></li>
+      <li><span>Trykk <b>Legg til</b> – ferdig! Appen ligger nå på Hjem-skjermen.</span></li>
+    </ol>
+    <p class="inst-note">Tallene lagres bare på denne telefonen, og bare når du trykker «Lagre». Ingenting sendes noe sted. Ta gjerne en «Sikkerhetskopi» av og til.</p>
+    <div class="inst-row"><button onclick="instClose(true)">Ikke nå</button><button class="primary" onclick="instClose(true)">Skjønner</button></div>
+  </div>
+</div>
+<script>
+(function () {
+  const ios = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  const installed = navigator.standalone || matchMedia('(display-mode: standalone)').matches;
+  if (!ios || installed) return;
+  document.body.classList.add('can-install');
+  const el = document.getElementById('inst');
+  window.instOpen = () => { el.classList.add('on'); requestAnimationFrame(() => requestAnimationFrame(() => el.classList.add('vis'))); };
+  window.instClose = () => { el.classList.remove('vis'); setTimeout(() => el.classList.remove('on'), 450);
+    try { sessionStorage.setItem('instSeen', '1'); } catch {} };
+  el.addEventListener('click', e => { if (e.target === el) instClose(); });
+  try { if (!sessionStorage.getItem('instSeen')) setTimeout(instOpen, 1400); } catch { setTimeout(instOpen, 1400); }
+})();
+</script>
+
+</body>
+</html>
